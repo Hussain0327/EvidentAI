@@ -1,0 +1,313 @@
+/**
+ * Zod Schema for ReleaseGate Configuration
+ *
+ * This schema validates the YAML configuration file and provides
+ * clear, actionable error messages for users.
+ *
+ * Design principles:
+ * - Fail fast with descriptive errors
+ * - Sensible defaults where possible
+ * - Type inference for TypeScript
+ */
+
+import { z } from 'zod';
+
+// =============================================================================
+// PII Entity Types
+// =============================================================================
+
+export const PIIEntityTypeSchema = z.enum([
+  'email',
+  'phone',
+  'ssn',
+  'credit_card',
+  'ip_address',
+  'address',
+  'name',
+  'date_of_birth',
+]);
+
+// =============================================================================
+// Evaluator Configurations
+// =============================================================================
+
+export const ExactMatchConfigSchema = z.object({
+  case_sensitive: z.boolean().default(true),
+  trim_whitespace: z.boolean().default(true),
+}).optional();
+
+export const ContainsConfigSchema = z.object({
+  case_sensitive: z.boolean().default(false),
+  match_all: z.boolean().default(false).describe('true = AND all terms, false = OR any term'),
+}).optional();
+
+export const LLMJudgeConfigSchema = z.object({
+  model: z.string().optional().describe('Override the judge model (defaults to provider model)'),
+  score_range: z.tuple([z.number(), z.number()]).default([1, 5]),
+  pass_threshold: z.number().min(0).max(10).default(3),
+  chain_of_thought: z.boolean().default(true).describe('Enable chain-of-thought reasoning for better accuracy'),
+}).optional();
+
+export const PIIConfigSchema = z.object({
+  fail_on: z.array(PIIEntityTypeSchema).min(1, 'Must specify at least one PII type to check'),
+  allow: z.array(PIIEntityTypeSchema).optional(),
+  redact: z.boolean().default(false).describe('Redact PII in output instead of failing'),
+});
+
+export const PromptInjectionConfigSchema = z.object({
+  detection_methods: z.array(z.enum(['heuristic', 'canary', 'llm'])).default(['heuristic']),
+  canary_tokens: z.array(z.string()).optional(),
+  sensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
+  check_input: z.boolean().default(true),
+  check_output: z.boolean().default(true),
+  llm_config: z.object({
+    model: z.string().optional(),
+    api_key: z.string().optional(),
+  }).optional(),
+}).optional();
+
+export const CustomEvaluatorConfigSchema = z.object({
+  script: z.string().min(1, 'Script path is required'),
+  timeout_ms: z.number().positive().default(30000),
+});
+
+// =============================================================================
+// Test Case Schemas (Discriminated Union)
+// =============================================================================
+
+const TestCaseBaseSchema = z.object({
+  name: z.string().min(1, 'Test case name is required'),
+  input: z.string().min(1, 'Test case input is required'),
+  description: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  timeout_ms: z.number().positive().optional(),
+});
+
+export const ExactMatchTestCaseSchema = TestCaseBaseSchema.extend({
+  evaluator: z.literal('exact-match'),
+  expected: z.string().min(1, 'Expected output is required for exact-match'),
+  config: ExactMatchConfigSchema,
+});
+
+export const ContainsTestCaseSchema = TestCaseBaseSchema.extend({
+  evaluator: z.literal('contains'),
+  expected: z.array(z.string()).min(1, 'At least one expected term is required'),
+  config: ContainsConfigSchema,
+});
+
+export const LLMJudgeTestCaseSchema = TestCaseBaseSchema.extend({
+  evaluator: z.literal('llm-judge'),
+  criteria: z.string().min(10, 'Evaluation criteria must be at least 10 characters'),
+  config: LLMJudgeConfigSchema,
+});
+
+export const PIITestCaseSchema = TestCaseBaseSchema.extend({
+  evaluator: z.literal('pii'),
+  config: PIIConfigSchema,
+});
+
+export const PromptInjectionTestCaseSchema = TestCaseBaseSchema.extend({
+  evaluator: z.literal('prompt-injection'),
+  config: PromptInjectionConfigSchema,
+});
+
+export const CustomTestCaseSchema = TestCaseBaseSchema.extend({
+  evaluator: z.literal('custom'),
+  config: CustomEvaluatorConfigSchema,
+});
+
+export const TestCaseSchema = z.discriminatedUnion('evaluator', [
+  ExactMatchTestCaseSchema,
+  ContainsTestCaseSchema,
+  LLMJudgeTestCaseSchema,
+  PIITestCaseSchema,
+  PromptInjectionTestCaseSchema,
+  CustomTestCaseSchema,
+]);
+
+// =============================================================================
+// Suite Schema
+// =============================================================================
+
+export const SuiteSchema = z.object({
+  name: z.string().min(1, 'Suite name is required'),
+  description: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  cases: z.array(TestCaseSchema).min(1, 'Suite must have at least one test case'),
+});
+
+// =============================================================================
+// Provider Schemas (Discriminated Union)
+// =============================================================================
+
+const ProviderBaseSchema = z.object({
+  temperature: z.number().min(0).max(2).optional(),
+  max_tokens: z.number().positive().optional(),
+  timeout_ms: z.number().positive().default(60000),
+});
+
+export const OpenAIProviderSchema = ProviderBaseSchema.extend({
+  name: z.literal('openai'),
+  model: z.string().min(1, 'Model is required'),
+  api_key: z.string().optional().describe('Falls back to OPENAI_API_KEY env var'),
+  base_url: z.string().url().optional(),
+});
+
+export const AnthropicProviderSchema = ProviderBaseSchema.extend({
+  name: z.literal('anthropic'),
+  model: z.string().min(1, 'Model is required'),
+  api_key: z.string().optional().describe('Falls back to ANTHROPIC_API_KEY env var'),
+});
+
+export const AzureProviderSchema = ProviderBaseSchema.extend({
+  name: z.literal('azure'),
+  deployment: z.string().min(1, 'Deployment name is required'),
+  endpoint: z.string().url('Must be a valid Azure endpoint URL'),
+  api_key: z.string().optional().describe('Falls back to AZURE_OPENAI_API_KEY env var'),
+  api_version: z.string().default('2024-02-15-preview'),
+});
+
+export const CustomProviderSchema = z.object({
+  name: z.literal('custom'),
+  endpoint: z.string().url('Must be a valid custom provider URL'),
+  headers: z.record(z.string()).optional(),
+  config: z.record(z.unknown()).optional(),
+});
+
+export const ProviderSchema = z.discriminatedUnion('name', [
+  OpenAIProviderSchema,
+  AnthropicProviderSchema,
+  AzureProviderSchema,
+  CustomProviderSchema,
+]);
+
+// =============================================================================
+// Thresholds Schema
+// =============================================================================
+
+export const SuiteThresholdSchema = z.object({
+  pass_rate: z.number().min(0).max(1).optional(),
+  average_score: z.number().min(0).max(1).optional(),
+});
+
+export const ThresholdsSchema = z.object({
+  pass_rate: z.number()
+    .min(0, 'Pass rate must be at least 0')
+    .max(1, 'Pass rate must be at most 1 (use 0.95 for 95%)')
+    .optional(),
+  average_score: z.number()
+    .min(0, 'Average score must be at least 0')
+    .max(1, 'Average score must be at most 1')
+    .optional(),
+  per_suite: z.record(z.string(), SuiteThresholdSchema).optional(),
+  max_pii_incidents: z.number().int().min(0).optional(),
+  max_prompt_injection_attempts: z.number().int().min(0).optional(),
+  max_latency_ms: z.number().positive().optional(),
+  max_cost_usd: z.number().positive().optional(),
+  max_tokens: z.number().int().positive().optional(),
+}).optional();
+
+// =============================================================================
+// Output Schema
+// =============================================================================
+
+export const OutputSchema = z.object({
+  format: z.enum(['json', 'yaml', 'junit', 'markdown']).default('json'),
+  path: z.string().default('./results.json'),
+  verbose: z.boolean().default(false),
+}).optional();
+
+// =============================================================================
+// Upload Schema
+// =============================================================================
+
+export const UploadSchema = z.object({
+  enabled: z.boolean().default(true),
+  api_url: z.string().url().default('https://api.releasegate.dev'),
+  api_key: z.string().optional().describe('Falls back to RELEASEGATE_API_KEY env var'),
+}).optional();
+
+// =============================================================================
+// Project Schema
+// =============================================================================
+
+export const ProjectSchema = z.object({
+  id: z.string().optional().describe('Project ID from dashboard'),
+  name: z.string().min(1, 'Project name is required'),
+  description: z.string().optional(),
+});
+
+// =============================================================================
+// Root Config Schema
+// =============================================================================
+
+export const ConfigSchema = z.object({
+  version: z.literal('1').describe('Config version, must be "1"'),
+  project: ProjectSchema,
+  provider: ProviderSchema,
+  suites: z.array(SuiteSchema).min(1, 'At least one suite is required'),
+  thresholds: ThresholdsSchema,
+  output: OutputSchema,
+  upload: UploadSchema,
+});
+
+// =============================================================================
+// Type Inference
+// =============================================================================
+
+export type Config = z.infer<typeof ConfigSchema>;
+export type ConfigInput = z.input<typeof ConfigSchema>;
+export type Suite = z.infer<typeof SuiteSchema>;
+export type TestCase = z.infer<typeof TestCaseSchema>;
+export type Provider = z.infer<typeof ProviderSchema>;
+export type Thresholds = z.infer<typeof ThresholdsSchema>;
+
+// =============================================================================
+// Validation Helpers
+// =============================================================================
+
+export interface ValidationError {
+  path: string;
+  message: string;
+}
+
+export interface ValidationResult {
+  success: boolean;
+  data?: Config;
+  errors?: ValidationError[];
+}
+
+/**
+ * Validate a config object and return structured errors
+ */
+export function validateConfig(config: unknown): ValidationResult {
+  const result = ConfigSchema.safeParse(config);
+
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+
+  const errors: ValidationError[] = result.error.errors.map((err) => ({
+    path: err.path.join('.'),
+    message: err.message,
+  }));
+
+  return { success: false, errors };
+}
+
+/**
+ * Format validation errors for CLI output
+ */
+export function formatValidationErrors(errors: ValidationError[]): string {
+  const lines = ['Configuration validation failed:', ''];
+
+  for (const error of errors) {
+    const path = error.path || '(root)';
+    lines.push(`  ✗ ${path}: ${error.message}`);
+  }
+
+  lines.push('');
+  lines.push('See https://docs.releasegate.dev/configuration for help.');
+
+  return lines.join('\n');
+}

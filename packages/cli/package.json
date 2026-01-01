@@ -1,0 +1,83 @@
+{
+  "name": "@evidentai/cli",
+  "version": "0.1.0",
+  "description": "GenAI Release Gate CLI - Test your LLM applications before release",
+  "keywords": [
+    "llm",
+    "testing",
+    "evaluation",
+    "ai",
+    "genai",
+    "release-gate",
+    "prompt-testing",
+    "pii-detection",
+    "prompt-injection"
+  ],
+  "author": "EvidentAI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/evidentai/genai-release-gate.git",
+    "directory": "packages/cli"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "releasegate": "./bin/releasegate.js",
+    "rg": "./bin/releasegate.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "templates"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./evaluators": {
+      "types": "./dist/runner/evaluators/index.d.ts",
+      "import": "./dist/runner/evaluators/index.mjs",
+      "require": "./dist/runner/evaluators/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "yaml": "^2.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsup": "^8.1.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

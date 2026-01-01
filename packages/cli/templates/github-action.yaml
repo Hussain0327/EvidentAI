@@ -1,0 +1,9 @@
+# GitHub Action template
+name: Release Gate
+on: [push]
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx @evidentai/cli run

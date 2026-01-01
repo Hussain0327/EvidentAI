@@ -1,0 +1,15 @@
+{
+  "name": "evidentai",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter @evidentai/cli build",
+    "dev": "pnpm --filter @evidentai/cli dev",
+    "test": "pnpm --filter @evidentai/cli test",
+    "lint": "pnpm --filter @evidentai/cli lint",
+    "typecheck": "pnpm --filter @evidentai/cli typecheck",
+    "clean": "pnpm --filter @evidentai/cli clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  }
+}
