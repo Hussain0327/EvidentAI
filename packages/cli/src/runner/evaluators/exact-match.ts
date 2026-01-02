@@ -61,19 +61,3 @@ export class ExactMatchEvaluator implements Evaluator {
   }
 }
 
-// Legacy export for backwards compatibility
-export function exactMatch(
-  output: string,
-  expected: string,
-  config?: ExactMatchConfig
-): EvaluatorResult {
-  void output;
-  void expected;
-  void config;
-  // Note: This is synchronous but we return a resolved promise for consistency
-  return {
-    passed: false,
-    score: 0,
-    reason: 'Use ExactMatchEvaluator.evaluate() instead',
-  };
-}

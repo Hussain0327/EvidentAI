@@ -23,6 +23,7 @@ export interface LLMJudgeConfig {
   pass_threshold?: number;
   chain_of_thought?: boolean;
   api_key?: string;
+  timeout_ms?: number;
 }
 
 interface JudgeResponse {
@@ -95,6 +96,7 @@ export class LLMJudgeEvaluator implements Evaluator {
     // For now, use OpenAI. In production, this would support multiple providers.
     const apiKey = config.api_key || process.env.OPENAI_API_KEY;
     const model = config.model || 'gpt-4o-mini';
+    const timeoutMs = config.timeout_ms || 30000;
 
     if (!apiKey) {
       throw new Error(
@@ -102,35 +104,123 @@ export class LLMJudgeEvaluator implements Evaluator {
       );
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert AI evaluator. Always respond with valid JSON.',
-          },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.1, // Low temperature for consistency
-        max_tokens: 1000,
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`LLM API error: ${response.status} - ${error}`);
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert AI evaluator. Always respond with valid JSON.',
+            },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1, // Low temperature for consistency
+          max_tokens: 1000,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`LLM API error: ${response.status} - ${error}`);
+      }
+
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      return data.choices?.[0]?.message?.content || '';
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`LLM judge API timeout after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Extract JSON from a string, handling various LLM output formats:
+   * 1. Direct JSON
+   * 2. Markdown code blocks (```json ... ```)
+   * 3. JSON embedded in text
+   */
+  private extractJSON(response: string): string | null {
+    // Method 1: Try parsing the entire response as JSON
+    const trimmed = response.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        JSON.parse(trimmed);
+        return trimmed;
+      } catch {
+        // Continue to other methods
+      }
     }
 
-    const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content || '';
+    // Method 2: Extract from markdown code block
+    const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch?.[1]) {
+      const content = codeBlockMatch[1].trim();
+      try {
+        JSON.parse(content);
+        return content;
+      } catch {
+        // Continue to other methods
+      }
+    }
+
+    // Method 3: Find balanced braces (handles nested objects correctly)
+    const firstBrace = response.indexOf('{');
+    if (firstBrace === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = firstBrace; i < response.length; i++) {
+      const char = response[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escape = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === '{') depth++;
+      if (char === '}') depth--;
+
+      if (depth === 0) {
+        const jsonStr = response.slice(firstBrace, i + 1);
+        try {
+          JSON.parse(jsonStr);
+          return jsonStr;
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    return null;
   }
 
   private parseJudgeResponse(
@@ -138,42 +228,81 @@ export class LLMJudgeEvaluator implements Evaluator {
     passThreshold: number,
     scoreRange: [number, number]
   ): JudgeResponse {
-    try {
-      // Try to extract JSON from the response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
+    const [minScore, maxScore] = scoreRange;
+
+    // Try to extract and parse JSON
+    const jsonStr = this.extractJSON(response);
+    if (jsonStr) {
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const score = Number(parsed.score);
+
+        if (isNaN(score)) {
+          throw new Error('Score is not a valid number');
+        }
+
+        // Validate and clamp score
+        const clampedScore = Math.max(minScore, Math.min(maxScore, score));
+
+        return {
+          reasoning: parsed.reasoning || 'No reasoning provided',
+          score: clampedScore,
+          passed: clampedScore >= passThreshold,
+        };
+      } catch (parseError) {
+        // JSON was extracted but parsing fields failed - continue to fallback
       }
+    }
 
-      const parsed = JSON.parse(jsonMatch[0]);
-      const score = Number(parsed.score);
-      const [minScore, maxScore] = scoreRange;
+    // Fallback 1: Try to extract score from patterns like "Score: 4" or "score": 4
+    const scorePatterns = [
+      /["']?score["']?\s*[:=]\s*(\d+(?:\.\d+)?)/i,
+      /\bscore\s+(?:is\s+)?(\d+(?:\.\d+)?)/i,
+      /(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*\d+/i,
+    ];
 
-      // Validate and clamp score
-      const clampedScore = Math.max(minScore, Math.min(maxScore, score));
-
-      return {
-        reasoning: parsed.reasoning || 'No reasoning provided',
-        score: clampedScore,
-        passed: clampedScore >= passThreshold,
-      };
-    } catch (error) {
-      // Fallback: try to extract a score from the text
-      const scoreMatch = response.match(/score[:\s]+(\d+(?:\.\d+)?)/i);
-      if (scoreMatch) {
-        const scoreText = scoreMatch[1];
-        if (scoreText !== undefined) {
-          const score = parseFloat(scoreText);
+    for (const pattern of scorePatterns) {
+      const match = response.match(pattern);
+      if (match?.[1]) {
+        const score = parseFloat(match[1]);
+        if (!isNaN(score)) {
+          // Try to extract reasoning too
+          const reasoningMatch = response.match(
+            /["']?reasoning["']?\s*[:=]\s*["']([^"']+)["']/i
+          );
           return {
-            reasoning: 'Failed to parse structured response',
-            score,
+            reasoning: reasoningMatch?.[1] || 'Extracted score from text (structured parsing failed)',
+            score: Math.max(minScore, Math.min(maxScore, score)),
             passed: score >= passThreshold,
           };
         }
       }
-
-      throw new Error(`Failed to parse judge response: ${error}`);
     }
+
+    // Fallback 2: Look for pass/fail indicators
+    const passIndicators = /\b(pass|passed|good|excellent|meets criteria)\b/i;
+    const failIndicators = /\b(fail|failed|poor|does not meet|doesn't meet)\b/i;
+
+    if (passIndicators.test(response) && !failIndicators.test(response)) {
+      return {
+        reasoning: 'Inferred pass from response text (structured parsing failed)',
+        score: passThreshold,
+        passed: true,
+      };
+    }
+
+    if (failIndicators.test(response)) {
+      return {
+        reasoning: 'Inferred fail from response text (structured parsing failed)',
+        score: minScore,
+        passed: false,
+      };
+    }
+
+    throw new Error(
+      `Failed to parse judge response. Expected JSON with "score" and "reasoning" fields. ` +
+      `Response preview: "${response.slice(0, 200)}..."`
+    );
   }
 
   async evaluate(ctx: EvaluatorContext): Promise<EvaluatorResult> {
@@ -236,11 +365,3 @@ export class LLMJudgeEvaluator implements Evaluator {
   }
 }
 
-// Legacy export
-export function llmJudge(): EvaluatorResult {
-  return {
-    passed: false,
-    score: 0,
-    reason: 'Use LLMJudgeEvaluator.evaluate() instead',
-  };
-}

@@ -255,12 +255,15 @@ export const ConfigSchema = z.object({
 // Type Inference
 // =============================================================================
 
+// Inferred types from Zod schemas - these are the source of truth
+export type PIIEntityType = z.infer<typeof PIIEntityTypeSchema>;
 export type Config = z.infer<typeof ConfigSchema>;
 export type ConfigInput = z.input<typeof ConfigSchema>;
 export type Suite = z.infer<typeof SuiteSchema>;
 export type TestCase = z.infer<typeof TestCaseSchema>;
-export type Provider = z.infer<typeof ProviderSchema>;
+export type ProviderConfig = z.infer<typeof ProviderSchema>;
 export type Thresholds = z.infer<typeof ThresholdsSchema>;
+export type ProjectConfig = z.infer<typeof ProjectSchema>;
 
 // =============================================================================
 // Validation Helpers

@@ -423,10 +423,5 @@ async function runCommand(options: RunOptions): Promise<void> {
   }
 }
 
-// Legacy export for backwards compatibility
-export function run(): void {
-  console.error('Use createRunCommand() with Commander.js instead');
-}
-
 // Direct execution support
 export { runCommand };

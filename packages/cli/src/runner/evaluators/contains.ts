@@ -83,18 +83,3 @@ export class ContainsEvaluator implements Evaluator {
   }
 }
 
-// Legacy export
-export function contains(
-  output: string,
-  expected: string[],
-  config?: ContainsConfig
-): EvaluatorResult {
-  void output;
-  void expected;
-  void config;
-  return {
-    passed: false,
-    score: 0,
-    reason: 'Use ContainsEvaluator.evaluate() instead',
-  };
-}

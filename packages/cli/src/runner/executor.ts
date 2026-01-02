@@ -105,167 +105,192 @@ interface AnthropicResponse {
 }
 
 // =============================================================================
-// LLM Provider Interface
+// LLM Provider Interface & Constants
 // =============================================================================
+
+const PROVIDER_DEFAULTS = {
+  timeoutMs: 60000,
+  openaiModel: 'gpt-4o-mini',
+  anthropicModel: 'claude-3-haiku-20240307',
+  temperature: 0.7,
+  anthropicVersion: '2023-06-01',
+  azureApiVersion: '2024-02-01',
+} as const;
 
 interface LLMProvider {
   call(input: string): Promise<string>;
 }
 
+interface FetchOptions {
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+  timeoutMs: number;
+  provider: string;
+}
+
+/**
+ * Shared helper for making LLM API calls with timeout and error handling.
+ * Eliminates duplication across all provider implementations.
+ */
+async function makeLLMCall<T>(
+  options: FetchOptions,
+  parseResponse: (data: T) => string
+): Promise<string> {
+  const { url, headers, body, timeoutMs, provider } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new APIError(
+        `${provider} API error: ${response.status} - ${error}`,
+        response.status,
+        provider
+      );
+    }
+
+    const data = (await response.json()) as T;
+    return parseResponse(data);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new APIError(`${provider} API timeout after ${timeoutMs}ms`, 408, provider);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Create an LLM provider from config
  */
-function createProvider(config: ProviderConfig): LLMProvider {
+function createProvider(config: ProviderConfig, timeoutMs: number = PROVIDER_DEFAULTS.timeoutMs): LLMProvider {
   switch (config.name) {
     case 'openai':
-      return createOpenAIProvider(config);
+      return createOpenAIProvider(config, timeoutMs);
     case 'anthropic':
-      return createAnthropicProvider(config);
+      return createAnthropicProvider(config, timeoutMs);
     case 'azure':
-      return createAzureProvider(config);
+      return createAzureProvider(config, timeoutMs);
     case 'custom':
-      return createCustomProvider(config);
+      return createCustomProvider(config, timeoutMs);
     default:
       throw new Error(`Unknown provider: ${(config as ProviderConfig).name}`);
   }
 }
 
-function createOpenAIProvider(config: ProviderConfig & { name: 'openai' }): LLMProvider {
+function createOpenAIProvider(config: ProviderConfig & { name: 'openai' }, timeoutMs: number): LLMProvider {
   const apiKey = config.api_key || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OpenAI API key not found. Set OPENAI_API_KEY or provide api_key in config.');
   }
 
   return {
-    async call(input: string): Promise<string> {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: config.model || 'gpt-4o-mini',
+    call: (input: string) => makeLLMCall<OpenAIResponse>(
+      {
+        url: 'https://api.openai.com/v1/chat/completions',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: {
+          model: config.model || PROVIDER_DEFAULTS.openaiModel,
           messages: [{ role: 'user', content: input }],
-          temperature: config.temperature ?? 0.7,
+          temperature: config.temperature ?? PROVIDER_DEFAULTS.temperature,
           max_tokens: config.max_tokens,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`OpenAI API error: ${response.status} - ${error}`);
-      }
-
-      const data = (await response.json()) as OpenAIResponse;
-      return data.choices[0]?.message?.content || '';
-    },
+        },
+        timeoutMs,
+        provider: 'OpenAI',
+      },
+      (data) => data.choices[0]?.message?.content || ''
+    ),
   };
 }
 
-function createAnthropicProvider(config: ProviderConfig & { name: 'anthropic' }): LLMProvider {
+function createAnthropicProvider(config: ProviderConfig & { name: 'anthropic' }, timeoutMs: number): LLMProvider {
   const apiKey = config.api_key || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error('Anthropic API key not found. Set ANTHROPIC_API_KEY or provide api_key in config.');
   }
 
   return {
-    async call(input: string): Promise<string> {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
+    call: (input: string) => makeLLMCall<AnthropicResponse>(
+      {
+        url: 'https://api.anthropic.com/v1/messages',
         headers: {
-          'Content-Type': 'application/json',
           'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
+          'anthropic-version': PROVIDER_DEFAULTS.anthropicVersion,
         },
-        body: JSON.stringify({
-          model: config.model || 'claude-3-haiku-20240307',
+        body: {
+          model: config.model || PROVIDER_DEFAULTS.anthropicModel,
           max_tokens: config.max_tokens || 1024,
           messages: [{ role: 'user', content: input }],
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Anthropic API error: ${response.status} - ${error}`);
-      }
-
-      const data = (await response.json()) as AnthropicResponse;
-      return data.content[0]?.text || '';
-    },
+        },
+        timeoutMs,
+        provider: 'Anthropic',
+      },
+      (data) => data.content[0]?.text || ''
+    ),
   };
 }
 
-function createAzureProvider(config: ProviderConfig & { name: 'azure' }): LLMProvider {
+function createAzureProvider(config: ProviderConfig & { name: 'azure' }, timeoutMs: number): LLMProvider {
   const apiKey = config.api_key || process.env.AZURE_OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('Azure OpenAI API key not found. Set AZURE_OPENAI_API_KEY or provide api_key in config.');
   }
-
   if (!config.endpoint) {
     throw new Error('Azure OpenAI endpoint is required.');
   }
-
   if (!config.deployment) {
     throw new Error('Azure OpenAI deployment name is required.');
   }
 
+  const url = `${config.endpoint}/openai/deployments/${config.deployment}/chat/completions?api-version=${config.api_version || PROVIDER_DEFAULTS.azureApiVersion}`;
+
   return {
-    async call(input: string): Promise<string> {
-      const url = `${config.endpoint}/openai/deployments/${config.deployment}/chat/completions?api-version=${config.api_version || '2024-02-01'}`;
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'api-key': apiKey,
-        },
-        body: JSON.stringify({
+    call: (input: string) => makeLLMCall<OpenAIResponse>(
+      {
+        url,
+        headers: { 'api-key': apiKey },
+        body: {
           messages: [{ role: 'user', content: input }],
-          temperature: config.temperature ?? 0.7,
+          temperature: config.temperature ?? PROVIDER_DEFAULTS.temperature,
           max_tokens: config.max_tokens,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Azure OpenAI API error: ${response.status} - ${error}`);
-      }
-
-      const data = (await response.json()) as OpenAIResponse;
-      return data.choices[0]?.message?.content || '';
-    },
+        },
+        timeoutMs,
+        provider: 'Azure OpenAI',
+      },
+      (data) => data.choices[0]?.message?.content || ''
+    ),
   };
 }
 
-function createCustomProvider(config: ProviderConfig & { name: 'custom' }): LLMProvider {
+function createCustomProvider(config: ProviderConfig & { name: 'custom' }, timeoutMs: number): LLMProvider {
   if (!config.endpoint) {
     throw new Error('Custom provider endpoint is required.');
   }
 
   return {
-    async call(input: string): Promise<string> {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(config.headers || {}),
-      };
-
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ input }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Custom provider error: ${response.status} - ${error}`);
+    call: (input: string) => makeLLMCall<Record<string, unknown>>(
+      {
+        url: config.endpoint,
+        headers: config.headers || {},
+        body: { input },
+        timeoutMs,
+        provider: 'Custom provider',
+      },
+      (data) => {
+        const output = data.output ?? data.response ?? data.text ?? data.content;
+        return typeof output === 'string' ? output : JSON.stringify(data);
       }
-
-      const data = (await response.json()) as Record<string, unknown>;
-      // Try common response formats
-      const output = data.output ?? data.response ?? data.text ?? data.content;
-      return typeof output === 'string' ? output : JSON.stringify(data);
-    },
+    ),
   };
 }
 
@@ -290,12 +315,59 @@ function generateRunId(): string {
 }
 
 /**
- * Execute with retry logic
+ * Custom error class for API errors with status codes
+ */
+export class APIError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number,
+    public provider: string
+  ) {
+    super(message);
+    this.name = 'APIError';
+  }
+
+  /**
+   * Check if this error is retryable
+   */
+  isRetryable(): boolean {
+    // 429 = rate limit, 5xx = server errors
+    return this.statusCode === 429 || this.statusCode >= 500;
+  }
+
+  /**
+   * Get suggested delay multiplier for this error type
+   */
+  getDelayMultiplier(): number {
+    // Rate limit errors get longer delays
+    if (this.statusCode === 429) {
+      return 3;
+    }
+    return 1;
+  }
+}
+
+/**
+ * Add jitter to delay to prevent thundering herd
+ * Returns delay +/- 25% randomization
+ */
+function addJitter(delayMs: number): number {
+  const jitterFactor = 0.5; // +/- 25%
+  const jitter = delayMs * jitterFactor * (Math.random() - 0.5);
+  return Math.max(0, delayMs + jitter);
+}
+
+/**
+ * Execute with enhanced retry logic
+ * - Exponential backoff with jitter
+ * - Non-retryable error detection (400, 401, 403, 404)
+ * - Extended delay for rate limits (429)
  */
 async function withRetry<T>(
   fn: () => Promise<T>,
   maxRetries: number,
-  delayMs: number
+  delayMs: number,
+  context?: string
 ): Promise<{ result: T; retries: number }> {
   let lastError: Error | null = null;
   let retries = 0;
@@ -308,13 +380,36 @@ async function withRetry<T>(
       lastError = error instanceof Error ? error : new Error(String(error));
       retries = attempt + 1;
 
+      // Check if error is retryable
+      if (lastError instanceof APIError && !lastError.isRetryable()) {
+        // Non-retryable error (400, 401, 403, 404) - fail fast
+        const contextStr = context ? ` [${context}]` : '';
+        throw new Error(
+          `${lastError.message}${contextStr} (non-retryable, attempt ${retries}/${maxRetries + 1})`
+        );
+      }
+
       if (attempt < maxRetries) {
-        await sleep(delayMs * Math.pow(2, attempt)); // Exponential backoff
+        // Calculate delay with exponential backoff and jitter
+        let delay = delayMs * Math.pow(2, attempt);
+
+        // Apply rate limit multiplier if applicable
+        if (lastError instanceof APIError) {
+          delay *= lastError.getDelayMultiplier();
+        }
+
+        // Add jitter to prevent thundering herd
+        delay = addJitter(delay);
+
+        await sleep(delay);
       }
     }
   }
 
-  throw lastError;
+  // Enhance error message with retry context
+  const contextStr = context ? ` [${context}]` : '';
+  const message = lastError?.message || 'Unknown error';
+  throw new Error(`${message}${contextStr} (after ${retries} attempts)`);
 }
 
 /**
@@ -395,7 +490,6 @@ export class Executor {
 
   constructor(config: Config, options: ExecutorOptions = {}) {
     this.config = config;
-    this.provider = createProvider(config.provider);
     this.options = {
       concurrency: options.concurrency ?? 5,
       maxRetries: options.maxRetries ?? 3,
@@ -404,6 +498,8 @@ export class Executor {
       verbose: options.verbose ?? false,
       onProgress: options.onProgress ?? (() => {}),
     };
+    // Pass timeout to provider so fetch calls respect it
+    this.provider = createProvider(config.provider, this.options.timeoutMs);
   }
 
   /**
@@ -535,10 +631,12 @@ export class Executor {
 
     try {
       // Call LLM provider with retry logic
+      // Context includes test name for better error messages
       const llmResult = await withRetry(
         () => this.provider.call(testCase.input),
         this.options.maxRetries,
-        this.options.retryDelayMs
+        this.options.retryDelayMs,
+        testCase.name || `test-${id}`
       );
       output = llmResult.result;
       retries = llmResult.retries;

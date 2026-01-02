@@ -51,17 +51,22 @@ const PII_PATTERNS: Record<PIIEntityType, { pattern: RegExp; confidence: 'high' 
   phone: [
     // US formats
     { pattern: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, confidence: 'high' },
-    { pattern: /\b\(\d{3}\)\s*\d{3}[-.\s]?\d{4}\b/g, confidence: 'high' },
-    { pattern: /\b\+1[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, confidence: 'high' },
-    // International
-    { pattern: /\b\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}\b/g, confidence: 'medium' },
+    // Parentheses format - can't use \b before ( since ( is not a word char
+    { pattern: /(?<![A-Za-z0-9])\(\d{3}\)\s*\d{3}[-.\s]?\d{4}\b/g, confidence: 'high' },
+    // +1 format - can't use \b before + since + is not a word char
+    { pattern: /(?<![A-Za-z0-9])\+1[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, confidence: 'high' },
+    // International - can't use \b before + since + is not a word char
+    { pattern: /(?<![A-Za-z0-9])\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}\b/g, confidence: 'medium' },
   ],
 
   ssn: [
-    // Standard SSN format: XXX-XX-XXXX
-    { pattern: /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g, confidence: 'high' },
-    // With context words
-    { pattern: /(?:ssn|social\s*security)[:\s]*\d{3}[-\s]?\d{2}[-\s]?\d{4}/gi, confidence: 'high' },
+    // With context words (most reliable)
+    { pattern: /(?:ssn|social\s*security(?:\s*number)?)[:\s]*\d{3}[-\s]?\d{2}[-\s]?\d{4}/gi, confidence: 'high' },
+    // Standard SSN format with separators: XXX-XX-XXXX (requires dashes/spaces to reduce false positives)
+    // The area number (first 3 digits) cannot be 000, 666, or 900-999
+    { pattern: /\b(?!000|666|9\d\d)\d{3}[-\s]\d{2}[-\s]\d{4}\b/g, confidence: 'medium' },
+    // Without separators - only match if preceded by SSN context (too many false positives otherwise)
+    { pattern: /(?:ssn|social)[:\s#]*(\d{9})\b/gi, confidence: 'medium' },
   ],
 
   credit_card: [
@@ -254,11 +259,3 @@ export class PIIDetectorEvaluator implements Evaluator {
   }
 }
 
-// Legacy export
-export function piiDetector(): EvaluatorResult {
-  return {
-    passed: false,
-    score: 0,
-    reason: 'Use PIIDetectorEvaluator.evaluate() instead',
-  };
-}
