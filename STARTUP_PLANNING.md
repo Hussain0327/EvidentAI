@@ -101,11 +101,12 @@
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │   Phase 1: CLI          ████████████████████████████████  100% ✅       │
-│   Phase 2: Dashboard    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    0%         │
+│   Phase 1.5: API        ████████████████░░░░░░░░░░░░░░░░   40% 🔶       │
+│   Phase 2: Dashboard    ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    5%         │
 │   Phase 3: CI/CD        ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    0%         │
 │   Phase 4: Enterprise   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    0%         │
 │                                                                         │
-│   Overall Progress:     ████████░░░░░░░░░░░░░░░░░░░░░░░░   25%         │
+│   Overall Progress:     ██████████░░░░░░░░░░░░░░░░░░░░░░   30%         │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -120,10 +121,52 @@
 | **Config System** | ✅ **Complete** | Zod validation, YAML parsing, env vars |
 | **Output Formats** | ✅ **Complete** | JSON, TAP, JUnit, Pretty console |
 | **E2E Tests** | ✅ **Complete** | Full test suite with mocked providers |
+| **CLI → API Integration** | ✅ **Complete** | Schema mismatch fixed, upload working |
 | **npm Package** | ✅ **Complete** | `@evidentai/cli` ready to publish |
-| **Dashboard** | 🔜 Coming | Next.js app structure only |
-| **API Backend** | 🔜 Coming | FastAPI structure only |
-| **Cloud Upload** | 🔜 Coming | CLI has placeholder |
+| **API Backend** | 🔶 **Partial** | Routes, models, CRUD working (needs auth, migrations) |
+| **Dashboard** | ❌ **Stub** | 26 empty page files, needs full build |
+| **Infrastructure** | ❌ **Stub** | Empty Terraform files |
+
+---
+
+## 🎯 IMMEDIATE NEXT STEPS (Resume Here)
+
+**Strategic Direction:** Validate market demand by shipping CLI to npm first.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    NEXT SESSION: LAUNCH CHECKLIST                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Step 1: Real LLM Test ← START HERE                                    │
+│  ════════════════════                                                   │
+│  [ ] Set OPENAI_API_KEY environment variable                           │
+│  [ ] Create test-real-llm.yaml config (see plan file)                  │
+│  [ ] Run: node bin/releasegate.js run -c test-real-llm.yaml --verbose  │
+│  [ ] Verify all 5 test cases pass with real OpenAI responses           │
+│                                                                         │
+│  Step 2: Polish for npm                                                 │
+│  ═════════════════════                                                  │
+│  [ ] Create LICENSE file (MIT)                                         │
+│  [ ] Run: npm pack --dry-run                                           │
+│  [ ] Verify package contents look correct                              │
+│                                                                         │
+│  Step 3: Publish                                                        │
+│  ═══════════════                                                        │
+│  [ ] npm login                                                         │
+│  [ ] npm publish --access public                                       │
+│  [ ] Verify: npm view @evidentai/cli                                   │
+│                                                                         │
+│  Step 4: Announce                                                       │
+│  ════════════════                                                       │
+│  [ ] Post on Hacker News (Show HN)                                     │
+│  [ ] Post on Reddit (/r/MachineLearning)                               │
+│  [ ] Tweet/post on X                                                   │
+│                                                                         │
+│  Full plan details: ~/.claude/plans/sunny-percolating-noodle.md        │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -367,6 +410,57 @@ packages/cli/
 ---
 
 ## Development Changelog
+
+### January 3, 2026 - Testing & Strategic Planning
+
+#### Session 1: Comprehensive Testing
+
+| Task | Status | Details |
+|------|--------|---------|
+| Build CLI package | ✅ | `pnpm build` successful |
+| Run unit tests | ✅ | 159 tests passing, 14 skipped |
+| Test CLI commands | ✅ | init, validate, dry-run all working |
+| **Fix CLI ↔ API schema mismatch** | ✅ | **CRITICAL BUG FIXED** |
+| Run E2E test (CLI → API) | ✅ | 201 Created, data stored correctly |
+| Verify database storage | ✅ | All 3 test cases with evaluator results stored |
+
+#### Critical Bug Fixed: CLI ↔ API Schema Mismatch
+
+The CLI was sending data in a format the API couldn't accept:
+
+| Field | CLI Was Sending | API Expected | Fixed |
+|-------|-----------------|--------------|-------|
+| Project | `project` (name) | `project_id` (UUID) | ✅ |
+| Cases | `suites[].testCases[]` | `suites[].cases[]` | ✅ |
+| Git | Not included | `git: { sha, ref, message }` | ✅ |
+| Config | Not included | `config_hash` | ✅ |
+| Times | Not included | `started_at`, `finished_at` | ✅ |
+| Metrics | Not included | `metrics: {...}` | ✅ |
+
+**Files Modified:**
+- `packages/cli/src/utils/git.ts` - Implemented git context extraction (was stub)
+- `packages/cli/src/utils/hash.ts` - Implemented config hashing (was stub)
+- `packages/cli/src/commands/run.ts` - Added `transformToApiPayload()` function
+
+#### Session 2: Strategic Planning
+
+Decided on go-to-market strategy:
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Primary goal | Validate demand | Learn if anyone wants this before building more |
+| First step | Test with real LLM | Don't publish broken software |
+| MVP scope | CLI only | Dashboard deferred, CLI provides standalone value |
+| License | MIT | Maximize adoption, monetize later |
+| Distribution | npm publish | Standard for Node.js tools |
+
+**What's NOT needed for MVP:**
+- Dashboard (defer)
+- User authentication (defer)
+- Billing/Stripe (defer)
+- Infrastructure/deployment (defer)
+
+---
 
 ### January 2, 2026 - Phase 1 Completion
 
@@ -725,6 +819,6 @@ node bin/releasegate.js run -c examples/basic.yaml
 ---
 
 <p align="center">
-  <b>Last Updated:</b> January 2, 2026<br>
-  <b>Phase 1 Complete</b> - Ready for Phase 2: Dashboard MVP
+  <b>Last Updated:</b> January 3, 2026<br>
+  <b>Phase 1 Complete</b> - Next: Real LLM test, then npm publish
 </p>

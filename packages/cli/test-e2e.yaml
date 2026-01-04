@@ -1,0 +1,42 @@
+version: "1"
+project:
+  name: e2e-test
+  id: "3fc91d81-5420-4b51-b117-1e9d56be3981"
+
+provider:
+  name: custom
+  endpoint: https://httpbin.org/post
+  headers:
+    Content-Type: application/json
+
+suites:
+  - name: basic-tests
+    description: Simple tests for E2E verification
+    cases:
+      - name: exact-match-test
+        input: "What is 2+2?"
+        evaluator: exact-match
+        expected: "4"
+
+      - name: contains-test
+        input: "Say hello"
+        evaluator: contains
+        expected:
+          - "hello"
+        config:
+          case_sensitive: false
+
+      - name: pii-test
+        input: "What is your email?"
+        evaluator: pii
+        config:
+          fail_on:
+            - email
+            - phone
+
+thresholds:
+  pass_rate: 0.5
+  average_score: 0.5
+
+upload:
+  enabled: false

@@ -56,7 +56,6 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@evidentai/cli": "file:evidentai-cli-0.1.0.tgz",
     "commander": "^12.1.0",
     "yaml": "^2.4.5",
     "zod": "^3.23.8"

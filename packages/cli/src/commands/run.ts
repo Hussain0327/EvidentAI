@@ -16,7 +16,10 @@ import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadConfig } from '../config/loader';
+import type { Config } from '../config/types';
 import { execute, type RunResult, type ProgressEvent } from '../runner/executor';
+import { getGitInfo } from '../utils/git';
+import { hashConfig } from '../utils/hash';
 
 // =============================================================================
 // Types
@@ -241,10 +244,150 @@ class ProgressReporter {
 }
 
 // =============================================================================
+// API Payload Types
+// =============================================================================
+
+interface ApiRunCreate {
+  project_id: string;
+  git?: {
+    sha: string;
+    ref?: string;
+    message?: string;
+    pr_number?: number;
+  };
+  config_hash: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  status: 'passed' | 'failed' | 'error';
+  total: number;
+  passed: number;
+  failed: number;
+  pass_rate: number;
+  suites: Array<{
+    name: string;
+    total: number;
+    passed: number;
+    failed: number;
+    pass_rate: number;
+    cases: Array<{
+      name: string;
+      input: string;
+      output: string;
+      passed: boolean;
+      score: number;
+      evaluator: string;
+      evaluator_result: {
+        passed: boolean;
+        score: number;
+        reason?: string;
+        details?: Record<string, unknown>;
+      };
+      latency_ms: number;
+      tokens_used?: number;
+      cost_usd?: number;
+      error?: string;
+    }>;
+  }>;
+  metrics: {
+    pii_detected: number;
+    prompt_injection_attempts: number;
+    avg_latency_ms: number;
+    total_tokens: number;
+    total_cost_usd: number;
+  };
+  thresholds_met: boolean;
+  threshold_violations?: string[];
+}
+
+// =============================================================================
+// Transform RunResult to API Payload
+// =============================================================================
+
+function transformToApiPayload(
+  result: RunResult,
+  config: Config,
+  startedAt: Date
+): ApiRunCreate {
+  // Collect metrics from evaluator results
+  let piiDetected = 0;
+  let promptInjectionAttempts = 0;
+  let totalLatencyMs = 0;
+  let totalCases = 0;
+
+  for (const suite of result.suites) {
+    for (const tc of suite.testCases) {
+      totalLatencyMs += tc.latencyMs;
+      totalCases++;
+
+      // Check evaluator type for metrics
+      if (tc.evaluator === 'pii' && !tc.result.passed) {
+        piiDetected += (tc.result.details?.total_matches as number) || 1;
+      }
+      if (tc.evaluator === 'prompt-injection' && !tc.result.passed) {
+        promptInjectionAttempts += (tc.result.details?.total_matches as number) || 1;
+      }
+    }
+  }
+
+  return {
+    project_id: config.project.id || config.project.name,
+    git: getGitInfo() || undefined,
+    config_hash: hashConfig(config),
+    started_at: startedAt.toISOString(),
+    finished_at: result.timestamp,
+    duration_ms: result.durationMs,
+    status: result.thresholdsResult.passed ? 'passed' : 'failed',
+    total: result.total,
+    passed: result.passed,
+    failed: result.failed,
+    pass_rate: result.passRate,
+    suites: result.suites.map((suite) => ({
+      name: suite.name,
+      total: suite.total,
+      passed: suite.passed,
+      failed: suite.failed,
+      pass_rate: suite.passRate,
+      cases: suite.testCases.map((tc) => ({
+        name: tc.name,
+        input: tc.input,
+        output: tc.output,
+        passed: tc.result.passed,
+        score: tc.result.score,
+        evaluator: tc.evaluator,
+        evaluator_result: {
+          passed: tc.result.passed,
+          score: tc.result.score,
+          reason: tc.result.reason,
+          details: tc.result.details,
+        },
+        latency_ms: tc.latencyMs,
+      })),
+    })),
+    metrics: {
+      pii_detected: piiDetected,
+      prompt_injection_attempts: promptInjectionAttempts,
+      avg_latency_ms: totalCases > 0 ? totalLatencyMs / totalCases : 0,
+      total_tokens: 0, // Not tracked yet
+      total_cost_usd: 0, // Not tracked yet
+    },
+    thresholds_met: result.thresholdsResult.passed,
+    threshold_violations: result.thresholdsResult.checks
+      .filter((c) => !c.passed)
+      .map((c) => `${c.name}: ${(c.actual * 100).toFixed(1)}% < ${(c.threshold * 100).toFixed(1)}%`),
+  };
+}
+
+// =============================================================================
 // Result Uploader
 // =============================================================================
 
-async function uploadResults(result: RunResult, apiKey?: string): Promise<boolean> {
+async function uploadResults(
+  result: RunResult,
+  config: Config,
+  startedAt: Date,
+  apiKey?: string
+): Promise<boolean> {
   const key = apiKey || process.env.RELEASEGATE_API_KEY;
   if (!key) {
     console.warn('⚠ No API key found. Set RELEASEGATE_API_KEY to upload results.');
@@ -254,13 +397,16 @@ async function uploadResults(result: RunResult, apiKey?: string): Promise<boolea
   const endpoint = process.env.RELEASEGATE_API_URL || 'https://api.releasegate.dev';
 
   try {
+    // Transform to API format
+    const payload = transformToApiPayload(result, config, startedAt);
+
     const response = await fetch(`${endpoint}/api/v1/runs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
+        'X-API-Key': key,
       },
-      body: JSON.stringify(result),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -269,8 +415,8 @@ async function uploadResults(result: RunResult, apiKey?: string): Promise<boolea
       return false;
     }
 
-    const data = await response.json();
-    console.log(`✓ Results uploaded: ${endpoint}/runs/${data.id}`);
+    const data = (await response.json()) as { id: string; dashboard_url: string };
+    console.log(`✓ Results uploaded: ${data.dashboard_url}`);
     return true;
   } catch (error) {
     console.error(`✗ Upload failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -362,6 +508,7 @@ async function runCommand(options: RunOptions): Promise<void> {
     // Execute tests
     reporter.log(`\nRunning ${config.suites.reduce((sum, s) => sum + s.cases.length, 0)} tests across ${config.suites.length} suite(s)...\n`);
 
+    const startedAt = new Date();
     const result = await execute(config, {
       concurrency: parseInt(options.concurrency || '5', 10),
       timeoutMs: parseInt(options.timeout || '60000', 10),
@@ -410,7 +557,7 @@ async function runCommand(options: RunOptions): Promise<void> {
 
     // Upload if requested
     if (options.upload || config.upload?.enabled) {
-      await uploadResults(result, config.upload?.api_key);
+      await uploadResults(result, config, startedAt, config.upload?.api_key);
     }
 
     // Exit with appropriate code
