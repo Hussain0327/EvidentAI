@@ -30,7 +30,8 @@
   "files": [
     "dist",
     "bin",
-    "templates"
+    "templates",
+    "LICENSE"
   ],
   "exports": {
     ".": {
