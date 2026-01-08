@@ -49,3 +49,11 @@ venv/
 # Results
 results/
 *.xml
+
+# npm pack artifacts
+*.tgz
+
+# Internal docs (not for public repo)
+STARTUP_PLANNING.md
+Architect.MD
+docs/
