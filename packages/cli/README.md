@@ -112,12 +112,22 @@ releasegate run --format junit -o results.xml  # JUnit output
 | Flag | Description |
 |------|-------------|
 | `-c, --config <path>` | Config file (default: releasegate.yaml) |
-| `-s, --suite <name>` | Run specific suite only |
-| `--concurrency <n>` | Parallel test limit (default: 3) |
+| `-s, --suite <name>` | Run specific suite(s) only |
+| `--concurrency <n>` | Parallel test limit (default: 5) |
+| `--timeout <ms>` | Timeout per test in milliseconds (default: 60000) |
+| `--retries <n>` | Max retries per LLM call (default: 3) |
+| `--retry-delay <ms>` | Base retry delay in milliseconds (default: 1000) |
 | `-o, --output <path>` | Output file path |
 | `--format <type>` | json, tap, junit, pretty |
+| `--upload` | Upload results to ReleaseGate cloud |
+| `--no-thresholds` | Skip threshold checks (always exit 0) |
 | `--dry-run` | Show tests without executing |
 | `-v, --verbose` | Verbose output |
+| `-q, --quiet` | Suppress all output except errors |
+
+### Reliability & Rate Limits
+
+ReleaseGate retries transient API failures (timeouts, 429s, and 5xx errors) with exponential backoff and jitter. If the provider returns `Retry-After` or rate-limit reset headers, those delays are respected. Tune behavior with `--retries` and `--retry-delay`.
 
 ### `releasegate init`
 

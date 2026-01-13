@@ -18,6 +18,7 @@ import * as path from 'path';
 import { loadConfig } from '../config/loader';
 import type { Config } from '../config/types';
 import { execute, type RunResult, type ProgressEvent } from '../runner/executor';
+import { ConsoleReporter, getReporter } from '../runner/reporters';
 import { getGitInfo } from '../utils/git';
 import { hashConfig } from '../utils/hash';
 
@@ -30,6 +31,8 @@ interface RunOptions {
   suite?: string[];
   concurrency?: string;
   timeout?: string;
+  retries?: string;
+  retryDelay?: string;
   verbose?: boolean;
   quiet?: boolean;
   output?: string;
@@ -37,150 +40,6 @@ interface RunOptions {
   upload?: boolean;
   noThresholds?: boolean;
   dryRun?: boolean;
-}
-
-// =============================================================================
-// Output Formatters
-// =============================================================================
-
-/**
- * Format results as JSON
- */
-function formatJSON(result: RunResult): string {
-  return JSON.stringify(result, null, 2);
-}
-
-/**
- * Format results as TAP (Test Anything Protocol)
- */
-function formatTAP(result: RunResult): string {
-  const lines: string[] = [];
-  lines.push(`TAP version 14`);
-  lines.push(`1..${result.total}`);
-
-  let testNum = 1;
-  for (const suite of result.suites) {
-    lines.push(`# Suite: ${suite.name}`);
-    for (const testCase of suite.testCases) {
-      const status = testCase.result.passed ? 'ok' : 'not ok';
-      lines.push(`${status} ${testNum} - ${suite.name}::${testCase.name}`);
-      if (!testCase.result.passed) {
-        lines.push(`  ---`);
-        lines.push(`  reason: ${testCase.result.reason}`);
-        lines.push(`  score: ${testCase.result.score}`);
-        lines.push(`  ...`);
-      }
-      testNum++;
-    }
-  }
-
-  lines.push(`# Tests: ${result.total}`);
-  lines.push(`# Pass: ${result.passed}`);
-  lines.push(`# Fail: ${result.failed}`);
-  lines.push(`# Pass Rate: ${(result.passRate * 100).toFixed(1)}%`);
-
-  return lines.join('\n');
-}
-
-/**
- * Format results as JUnit XML
- */
-function formatJUnit(result: RunResult): string {
-  const lines: string[] = [];
-  lines.push(`<?xml version="1.0" encoding="UTF-8"?>`);
-  lines.push(`<testsuites name="${result.project}" tests="${result.total}" failures="${result.failed}" time="${(result.durationMs / 1000).toFixed(3)}">`);
-
-  for (const suite of result.suites) {
-    const failures = suite.testCases.filter((t) => !t.result.passed).length;
-    lines.push(`  <testsuite name="${escapeXml(suite.name)}" tests="${suite.total}" failures="${failures}" time="${(suite.durationMs / 1000).toFixed(3)}">`);
-
-    for (const testCase of suite.testCases) {
-      lines.push(`    <testcase name="${escapeXml(testCase.name)}" classname="${escapeXml(suite.name)}" time="${(testCase.latencyMs / 1000).toFixed(3)}">`);
-      if (!testCase.result.passed) {
-        lines.push(`      <failure message="${escapeXml(testCase.result.reason)}">`);
-        lines.push(`Score: ${testCase.result.score}`);
-        if (testCase.result.details) {
-          lines.push(`Details: ${JSON.stringify(testCase.result.details)}`);
-        }
-        lines.push(`      </failure>`);
-      }
-      lines.push(`    </testcase>`);
-    }
-
-    lines.push(`  </testsuite>`);
-  }
-
-  lines.push(`</testsuites>`);
-  return lines.join('\n');
-}
-
-/**
- * Format results as pretty console output
- */
-function formatPretty(result: RunResult): string {
-  const lines: string[] = [];
-  const passed = result.thresholdsResult.passed;
-  const statusEmoji = passed ? '✅' : '❌';
-  const statusText = passed ? 'PASSED' : 'FAILED';
-
-  lines.push('');
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`  ${statusEmoji} ReleaseGate Results: ${statusText}`);
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push('');
-
-  // Summary
-  lines.push(`  Project:    ${result.project}`);
-  lines.push(`  Run ID:     ${result.runId}`);
-  lines.push(`  Duration:   ${(result.durationMs / 1000).toFixed(2)}s`);
-  lines.push('');
-
-  // Overall stats
-  lines.push(`  Tests:      ${result.passed}/${result.total} passed (${(result.passRate * 100).toFixed(1)}%)`);
-  lines.push(`  Avg Score:  ${(result.averageScore * 100).toFixed(1)}%`);
-  lines.push('');
-
-  // Suite breakdown
-  lines.push(`  Suites:`);
-  for (const suite of result.suites) {
-    const suiteStatus = suite.failed === 0 ? '✓' : '✗';
-    lines.push(`    ${suiteStatus} ${suite.name}: ${suite.passed}/${suite.total} passed`);
-
-    // Show failed tests
-    const failedTests = suite.testCases.filter((t) => !t.result.passed);
-    for (const test of failedTests) {
-      lines.push(`      ✗ ${test.name}`);
-      lines.push(`        Reason: ${test.result.reason}`);
-    }
-  }
-  lines.push('');
-
-  // Thresholds
-  if (result.thresholdsResult.checks.length > 0) {
-    lines.push(`  Thresholds:`);
-    for (const check of result.thresholdsResult.checks) {
-      const checkStatus = check.passed ? '✓' : '✗';
-      lines.push(`    ${checkStatus} ${check.name}: ${(check.actual * 100).toFixed(1)}% (threshold: ${(check.threshold * 100).toFixed(1)}%)`);
-    }
-    lines.push('');
-  }
-
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push('');
-
-  return lines.join('\n');
-}
-
-/**
- * Escape XML special characters
- */
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
 }
 
 // =============================================================================
@@ -435,6 +294,8 @@ export function createRunCommand(): Command {
     .option('-s, --suite <names...>', 'Run specific suites only')
     .option('--concurrency <number>', 'Max concurrent test executions', '5')
     .option('--timeout <ms>', 'Timeout per test in milliseconds', '60000')
+    .option('--retries <number>', 'Max retries per LLM call', '3')
+    .option('--retry-delay <ms>', 'Base retry delay in milliseconds', '1000')
     .option('-v, --verbose', 'Show detailed output')
     .option('-q, --quiet', 'Suppress all output except errors')
     .option('-o, --output <path>', 'Write results to file')
@@ -512,27 +373,15 @@ async function runCommand(options: RunOptions): Promise<void> {
     const result = await execute(config, {
       concurrency: parseInt(options.concurrency || '5', 10),
       timeoutMs: parseInt(options.timeout || '60000', 10),
+      maxRetries: parseInt(options.retries || '3', 10),
+      retryDelayMs: parseInt(options.retryDelay || '1000', 10),
       verbose: options.verbose,
       onProgress: (event) => reporter.onProgress(event),
     });
 
     // Format output
-    let output: string;
-    switch (options.format) {
-      case 'json':
-        output = formatJSON(result);
-        break;
-      case 'tap':
-        output = formatTAP(result);
-        break;
-      case 'junit':
-        output = formatJUnit(result);
-        break;
-      case 'pretty':
-      default:
-        output = formatPretty(result);
-        break;
-    }
+    const outputReporter = getReporter(options.format || 'pretty');
+    const output = outputReporter.format(result);
 
     // Write to file or console
     if (options.output) {
@@ -552,7 +401,8 @@ async function runCommand(options: RunOptions): Promise<void> {
 
     // Always show pretty output to console unless quiet
     if (!options.quiet) {
-      console.log(formatPretty(result));
+      const consoleReporter = new ConsoleReporter();
+      console.log(consoleReporter.format(result));
     }
 
     // Upload if requested
