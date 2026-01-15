@@ -8,42 +8,33 @@
 
 ---
 
-## Why?
-
-LLM applications are non-deterministic. The same prompt can produce different outputs, leak PII, or be vulnerable to prompt injection. **ReleaseGate** catches these issues before production.
+LLM outputs are non-deterministic. The same prompt can produce different results, leak PII, or fall to prompt injection. ReleaseGate tests for this before your code hits production.
 
 ```
-Your Code → LLM → ReleaseGate → ✅ Deploy or 🚫 Block
+Your Code → LLM → ReleaseGate → Pass/Fail
 ```
 
 ## Quick Start
 
 ```bash
-# Install
 npm install -g @evidentai/cli
-
-# Set your API key
 export OPENAI_API_KEY=sk-...
-
-# Create config
 releasegate init
-
-# Run tests
 releasegate run
 ```
 
-## What It Tests
+## Evaluators
 
-| Evaluator | Description | Use Case |
-|-----------|-------------|----------|
-| `exact-match` | Strict string comparison | Deterministic outputs |
-| `contains` | Keyword matching (AND/OR) | Required terms validation |
-| `llm-judge` | LLM-as-judge scoring | Quality assessment |
-| `pii` | PII detection | Privacy compliance |
-| `prompt-injection` | Injection attack detection | Security testing |
-| `custom` | Your own JavaScript | Custom logic |
+| Type | Description |
+|------|-------------|
+| `exact-match` | Strict string comparison |
+| `contains` | Keyword matching (AND/OR) |
+| `llm-judge` | LLM-as-judge scoring |
+| `pii` | PII detection |
+| `prompt-injection` | Injection attack detection |
+| `custom` | Your own JavaScript |
 
-## Example Config
+## Config
 
 ```yaml
 version: "1"
@@ -90,95 +81,57 @@ thresholds:
   pass_rate: 0.9
   per_suite:
     safety:
-      pass_rate: 1.0  # Safety must be 100%
+      pass_rate: 1.0
 ```
 
 ## Commands
 
-### `releasegate run`
-
-Run test suites against your LLM.
-
 ```bash
 releasegate run                     # Run all tests
-releasegate run -c config.yaml      # Specific config file
-releasegate run --suite safety      # Run one suite only
-releasegate run --dry-run           # Preview without running
+releasegate run -c config.yaml      # Specific config
+releasegate run --suite safety      # Single suite
+releasegate run --dry-run           # Preview only
 releasegate run --verbose           # Detailed output
-releasegate run --format junit -o results.xml  # JUnit output
+releasegate run --format junit -o results.xml
 ```
 
-**Options:**
 | Flag | Description |
 |------|-------------|
 | `-c, --config <path>` | Config file (default: releasegate.yaml) |
-| `-s, --suite <name>` | Run specific suite(s) only |
+| `-s, --suite <name>` | Run specific suite(s) |
 | `--concurrency <n>` | Parallel test limit (default: 5) |
-| `--timeout <ms>` | Timeout per test in milliseconds (default: 60000) |
+| `--timeout <ms>` | Timeout per test (default: 60000) |
 | `--retries <n>` | Max retries per LLM call (default: 3) |
-| `--retry-delay <ms>` | Base retry delay in milliseconds (default: 1000) |
-| `-o, --output <path>` | Output file path |
+| `-o, --output <path>` | Output file |
 | `--format <type>` | json, tap, junit, pretty |
-| `--upload` | Upload results to ReleaseGate cloud |
-| `--no-thresholds` | Skip threshold checks (always exit 0) |
 | `--dry-run` | Show tests without executing |
 | `-v, --verbose` | Verbose output |
-| `-q, --quiet` | Suppress all output except errors |
+| `-q, --quiet` | Errors only |
+| `--no-color` | Disable colored output |
 
-### Reliability & Rate Limits
-
-ReleaseGate retries transient API failures (timeouts, 429s, and 5xx errors) with exponential backoff and jitter. If the provider returns `Retry-After` or rate-limit reset headers, those delays are respected. Tune behavior with `--retries` and `--retry-delay`.
-
-### `releasegate init`
-
-Create a starter config file.
-
-```bash
-releasegate init                    # Creates releasegate.yaml
-releasegate init -o custom.yaml     # Custom filename
-releasegate init --force            # Overwrite existing
-```
-
-### `releasegate validate`
-
-Validate config without running tests.
-
-```bash
-releasegate validate
-releasegate validate -c custom.yaml
-```
-
----
-
-## Evaluators
+## Evaluator Reference
 
 ### exact-match
-
-Strict string comparison.
 
 ```yaml
 evaluator: exact-match
 expected: "Hello, World!"
 config:
-  case_sensitive: false  # default: true
-  trim: true             # default: true
+  case_sensitive: false
+  trim: true
 ```
 
 ### contains
-
-Check for required keywords.
 
 ```yaml
 evaluator: contains
 expected: ["term1", "term2", "term3"]
 config:
-  match_all: true       # true = AND, false = OR (default)
-  case_sensitive: false # default: false
+  match_all: true        # AND logic
+  case_sensitive: false
 ```
 
 ### llm-judge
-
-LLM-as-judge with custom criteria (G-Eval approach).
 
 ```yaml
 evaluator: llm-judge
@@ -188,13 +141,11 @@ criteria: |
   - Clarity of explanation
   - Professional tone
 config:
-  score_range: [1, 5]   # Scoring range
-  pass_threshold: 4     # Minimum to pass
+  score_range: [1, 5]
+  pass_threshold: 4
 ```
 
 ### pii
-
-Detect personally identifiable information.
 
 ```yaml
 evaluator: pii
@@ -207,26 +158,22 @@ config:
     - ip_address
 ```
 
-**Detected PII types:** email, phone, ssn, credit_card, ip_address, address, name, date_of_birth
+Detects: email, phone, ssn, credit_card, ip_address, address, name, date_of_birth
 
 ### prompt-injection
-
-Multi-layer prompt injection detection.
 
 ```yaml
 evaluator: prompt-injection
 config:
-  sensitivity: high     # low, medium, high
+  sensitivity: high
   detection_methods:
-    - heuristic         # Pattern matching
-    - canary            # Canary token detection
+    - heuristic
+    - canary
 ```
 
-**Detects:** ignore instructions, system prompt leaks, jailbreaks (DAN), role switching, encoded attacks
+Detects: ignore instructions, system prompt leaks, jailbreaks, role switching, encoded attacks
 
 ### custom
-
-Your own evaluation logic.
 
 ```yaml
 evaluator: custom
@@ -246,8 +193,6 @@ module.exports = async function({ input, output, config }) {
 };
 ```
 
----
-
 ## Providers
 
 ### OpenAI
@@ -255,7 +200,7 @@ module.exports = async function({ input, output, config }) {
 ```yaml
 provider:
   name: openai
-  model: gpt-4o-mini  # or gpt-4o, gpt-4-turbo, gpt-3.5-turbo
+  model: gpt-4o-mini
   api_key: ${OPENAI_API_KEY}
   temperature: 0.7
   max_tokens: 1000
@@ -266,7 +211,7 @@ provider:
 ```yaml
 provider:
   name: anthropic
-  model: claude-3-haiku-20240307  # or claude-3-sonnet, claude-3-opus
+  model: claude-3-haiku-20240307
   api_key: ${ANTHROPIC_API_KEY}
 ```
 
@@ -292,9 +237,7 @@ provider:
     X-Custom-Header: value
 ```
 
----
-
-## CI/CD Integration
+## CI/CD
 
 ### GitHub Actions
 
@@ -310,21 +253,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Run Release Gate
-        run: |
+      - run: |
           npm install -g @evidentai/cli
           releasegate run --format junit -o results.xml
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-      - name: Upload Results
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: release-gate-results
@@ -344,29 +281,28 @@ release-gate:
       junit: results.xml
 ```
 
----
-
 ## Programmatic Usage
 
 ```typescript
 import { loadConfig, execute } from '@evidentai/cli';
 
-async function runTests() {
-  const { config } = loadConfig({ configPath: './releasegate.yaml' });
-  const result = await execute(config);
+const { config } = loadConfig({ configPath: './releasegate.yaml' });
+const result = await execute(config);
 
-  console.log(`Pass rate: ${(result.passRate * 100).toFixed(1)}%`);
-  console.log(`Passed: ${result.passed}/${result.total}`);
+console.log(`Pass rate: ${(result.passRate * 100).toFixed(1)}%`);
+console.log(`Passed: ${result.passed}/${result.total}`);
 
-  if (!result.success) {
-    process.exit(1);
-  }
-}
-
-runTests();
+if (!result.success) process.exit(1);
 ```
 
----
+## Output Formats
+
+```bash
+releasegate run --format json -o results.json
+releasegate run --format junit -o results.xml
+releasegate run --format tap
+releasegate run --format pretty
+```
 
 ## Environment Variables
 
@@ -375,40 +311,14 @@ runTests();
 | `OPENAI_API_KEY` | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
-
----
-
-## Output Formats
-
-### JSON (default)
-```bash
-releasegate run --format json -o results.json
-```
-
-### JUnit XML (for CI/CD)
-```bash
-releasegate run --format junit -o results.xml
-```
-
-### TAP (Test Anything Protocol)
-```bash
-releasegate run --format tap
-```
-
-### Pretty (human-readable)
-```bash
-releasegate run --format pretty
-```
-
----
+| `NO_COLOR` | Disable colored output |
 
 ## License
 
-MIT - see [LICENSE](./LICENSE)
+MIT
 
 ---
 
-<p align="center">
-  <b>Don't ship broken AI.</b><br>
-  <code>npm install -g @evidentai/cli && releasegate run</code>
-</p>
+```
+npm install -g @evidentai/cli && releasegate run
+```
