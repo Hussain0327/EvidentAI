@@ -1,6 +1,6 @@
 {
   "name": "@evidentai/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "GenAI Release Gate CLI - Test your LLM applications before release",
   "keywords": [
     "llm",

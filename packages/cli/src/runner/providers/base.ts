@@ -143,7 +143,12 @@ export async function makeLLMCall<T>(
     return parseResponse(data);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new APIError(`${provider} API timeout after ${timeoutMs}ms`, 408, provider);
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      throw new APIError(
+        `${provider} API request timed out after ${timeoutSec}s. Try increasing the timeout: releasegate run --timeout ${timeoutMs * 2}`,
+        408,
+        provider
+      );
     }
     throw error;
   } finally {

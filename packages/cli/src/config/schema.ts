@@ -13,19 +13,23 @@
 import { z } from 'zod';
 
 // =============================================================================
+// Constants for valid values (used in error messages)
+// =============================================================================
+
+export const VALID_EVALUATORS = ['exact-match', 'contains', 'llm-judge', 'pii', 'prompt-injection', 'custom'] as const;
+export const VALID_PROVIDERS = ['openai', 'anthropic', 'azure', 'custom'] as const;
+export const VALID_PII_TYPES = ['email', 'phone', 'ssn', 'credit_card', 'ip_address', 'address', 'name', 'date_of_birth'] as const;
+export const VALID_OUTPUT_FORMATS = ['json', 'yaml', 'junit', 'markdown'] as const;
+export const VALID_DETECTION_METHODS = ['heuristic', 'canary', 'llm'] as const;
+export const VALID_SENSITIVITIES = ['low', 'medium', 'high'] as const;
+
+// =============================================================================
 // PII Entity Types
 // =============================================================================
 
-export const PIIEntityTypeSchema = z.enum([
-  'email',
-  'phone',
-  'ssn',
-  'credit_card',
-  'ip_address',
-  'address',
-  'name',
-  'date_of_birth',
-]);
+export const PIIEntityTypeSchema = z.enum(VALID_PII_TYPES, {
+  errorMap: () => ({ message: `Invalid PII type. Expected one of: ${VALID_PII_TYPES.join(', ')}` }),
+});
 
 // =============================================================================
 // Evaluator Configurations
@@ -55,9 +59,13 @@ export const PIIConfigSchema = z.object({
 });
 
 export const PromptInjectionConfigSchema = z.object({
-  detection_methods: z.array(z.enum(['heuristic', 'canary', 'llm'])).default(['heuristic']),
+  detection_methods: z.array(z.enum(VALID_DETECTION_METHODS, {
+    errorMap: () => ({ message: `Invalid detection method. Expected one of: ${VALID_DETECTION_METHODS.join(', ')}` }),
+  })).default(['heuristic']),
   canary_tokens: z.array(z.string()).optional(),
-  sensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
+  sensitivity: z.enum(VALID_SENSITIVITIES, {
+    errorMap: () => ({ message: `Invalid sensitivity. Expected one of: ${VALID_SENSITIVITIES.join(', ')}` }),
+  }).default('medium'),
   check_input: z.boolean().default(true),
   check_output: z.boolean().default(true),
   llm_config: z.object({
@@ -212,7 +220,9 @@ export const ThresholdsSchema = z.object({
 // =============================================================================
 
 export const OutputSchema = z.object({
-  format: z.enum(['json', 'yaml', 'junit', 'markdown']).default('json'),
+  format: z.enum(VALID_OUTPUT_FORMATS, {
+    errorMap: () => ({ message: `Invalid output format. Expected one of: ${VALID_OUTPUT_FORMATS.join(', ')}` }),
+  }).default('json'),
   path: z.string().default('./results.json'),
   verbose: z.boolean().default(false),
 }).optional();

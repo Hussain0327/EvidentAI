@@ -11,7 +11,18 @@ export function createOpenAIProvider(
 ): LLMProvider {
   const apiKey = config.api_key || process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('OpenAI API key not found. Set OPENAI_API_KEY or provide api_key in config.');
+    throw new Error(
+      `OpenAI API key not found.
+
+Set the environment variable:
+  export OPENAI_API_KEY=your-key-here
+
+Or add to your config file:
+  provider:
+    api_key: your-key-here
+
+Get a key at: https://platform.openai.com/api-keys`
+    );
   }
 
   return {

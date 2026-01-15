@@ -45,7 +45,6 @@ const CONFIG_FILE_NAMES = [
   'releasegate.yml',
   '.releasegate.yaml',
   '.releasegate.yml',
-  'releasegatec.yaml',
   'rg.yaml',
   'rg.yml',
 ];
@@ -151,6 +150,47 @@ function parseYAML(content: string, filePath: string): unknown {
 // =============================================================================
 
 /**
+ * Format a validation path to be more human-readable
+ * e.g., "suites.0.cases.1.evaluator" -> "suites[1].cases[2].evaluator"
+ */
+function formatValidationPath(pathArr: (string | number)[], data: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = data;
+
+  for (let i = 0; i < pathArr.length; i++) {
+    const segment = pathArr[i] as string | number;
+    const prevSegment = i > 0 ? pathArr[i - 1] : null;
+
+    if (typeof segment === 'number') {
+      // Try to get a name for better context
+      const item = Array.isArray(current) ? current[segment] : null;
+      const name = item && typeof item === 'object' && item !== null && 'name' in item
+        ? (item as { name: string }).name
+        : null;
+
+      if (name) {
+        parts.push(`"${name}"`);
+      } else {
+        parts.push(`[${segment + 1}]`);  // 1-indexed for humans
+      }
+      current = item;
+    } else {
+      if (parts.length > 0 && typeof prevSegment !== 'number') {
+        parts.push('.');
+      } else if (parts.length > 0) {
+        parts.push('.');
+      }
+      parts.push(segment);
+      current = current && typeof current === 'object' && current !== null
+        ? (current as Record<string, unknown>)[segment]
+        : null;
+    }
+  }
+
+  return parts.join('');
+}
+
+/**
  * Validate configuration against schema
  */
 function validateConfig(data: unknown, filePath: string): Config {
@@ -158,11 +198,11 @@ function validateConfig(data: unknown, filePath: string): Config {
 
   if (!result.success) {
     const errors = result.error.errors.map((e) => {
-      const path = e.path.join('.');
-      return `  - ${path}: ${e.message}`;
+      const path = formatValidationPath(e.path, data);
+      return `  ✗ ${path || '(root)'}: ${e.message}`;
     });
     throw new Error(
-      `Configuration validation failed in ${filePath}:\n${errors.join('\n')}`
+      `Configuration validation failed in ${filePath}:\n\n${errors.join('\n')}\n\nSee https://docs.releasegate.dev/configuration for help.`
     );
   }
 
@@ -195,7 +235,13 @@ export function loadConfig(options: LoaderOptions = {}): LoadResult {
     const found = findConfigFile(cwd);
     if (!found) {
       throw new Error(
-        `No configuration file found. Create one of: ${CONFIG_FILE_NAMES.join(', ')}`
+        `No configuration file found.
+
+To get started, run:
+  releasegate init
+
+This will create a sample configuration file with examples.
+For help: releasegate --help`
       );
     }
     configPath = found;

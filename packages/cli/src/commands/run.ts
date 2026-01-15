@@ -21,6 +21,7 @@ import { execute, type RunResult, type ProgressEvent } from '../runner/executor'
 import { ConsoleReporter, getReporter } from '../runner/reporters';
 import { getGitInfo } from '../utils/git';
 import { hashConfig } from '../utils/hash';
+import { colorize } from '../utils/logger';
 
 // =============================================================================
 // Types
@@ -68,9 +69,8 @@ class ProgressReporter {
       case 'test_end':
         if (this.verbose || !event.passed) {
           const status = event.passed ? '✓' : '✗';
-          const color = event.passed ? '\x1b[32m' : '\x1b[31m';
-          const reset = '\x1b[0m';
-          console.log(`  ${color}${status}${reset} ${event.testCase} (${event.current}/${event.total})`);
+          const colorName = event.passed ? 'green' : 'red';
+          console.log(`  ${colorize(status, colorName as 'green' | 'red')} ${event.testCase} (${event.current}/${event.total})`);
         } else {
           // Simple progress indicator
           process.stdout.write('.');
@@ -92,12 +92,12 @@ class ProgressReporter {
   }
 
   error(message: string): void {
-    console.error(`\x1b[31m✗ ${message}\x1b[0m`);
+    console.error(colorize(`✗ ${message}`, 'red'));
   }
 
   warn(message: string): void {
     if (!this.quiet) {
-      console.warn(`\x1b[33m⚠ ${message}\x1b[0m`);
+      console.warn(colorize(`⚠ ${message}`, 'yellow'));
     }
   }
 }
@@ -287,22 +287,81 @@ async function uploadResults(
 // Main Run Command
 // =============================================================================
 
+// =============================================================================
+// CLI Option Validation
+// =============================================================================
+
+interface ValidatedOptions {
+  concurrency: number;
+  timeout: number;
+  retries: number;
+  retryDelay: number;
+}
+
+function validateOptions(options: RunOptions): ValidatedOptions {
+  const errors: string[] = [];
+
+  const concurrency = parseInt(options.concurrency || '5', 10);
+  if (isNaN(concurrency) || concurrency < 1 || concurrency > 100) {
+    errors.push(`--concurrency must be between 1 and 100 (got: ${options.concurrency})`);
+  }
+
+  const timeout = parseInt(options.timeout || '60000', 10);
+  if (isNaN(timeout) || timeout < 1000 || timeout > 600000) {
+    errors.push(`--timeout must be between 1000ms and 600000ms (10 min) (got: ${options.timeout})`);
+  }
+
+  const retries = parseInt(options.retries || '3', 10);
+  if (isNaN(retries) || retries < 0 || retries > 10) {
+    errors.push(`--retries must be between 0 and 10 (got: ${options.retries})`);
+  }
+
+  const retryDelay = parseInt(options.retryDelay || '1000', 10);
+  if (isNaN(retryDelay) || retryDelay < 100 || retryDelay > 60000) {
+    errors.push(`--retry-delay must be between 100ms and 60000ms (got: ${options.retryDelay})`);
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid options:\n  ${errors.join('\n  ')}`);
+  }
+
+  return { concurrency, timeout, retries, retryDelay };
+}
+
+// =============================================================================
+// Main Run Command
+// =============================================================================
+
 export function createRunCommand(): Command {
   const command = new Command('run')
     .description('Run test suites against your LLM application')
     .option('-c, --config <path>', 'Path to configuration file')
     .option('-s, --suite <names...>', 'Run specific suites only')
-    .option('--concurrency <number>', 'Max concurrent test executions', '5')
-    .option('--timeout <ms>', 'Timeout per test in milliseconds', '60000')
-    .option('--retries <number>', 'Max retries per LLM call', '3')
-    .option('--retry-delay <ms>', 'Base retry delay in milliseconds', '1000')
-    .option('-v, --verbose', 'Show detailed output')
+    .option('--concurrency <n>', 'Max concurrent test executions (default: 5, range: 1-100)', '5')
+    .option('--timeout <ms>', 'Request timeout in milliseconds (default: 60000, range: 1000-600000)', '60000')
+    .option('--retries <n>', 'Max retry attempts per LLM call (default: 3, range: 0-10)', '3')
+    .option('--retry-delay <ms>', 'Base retry delay in milliseconds (default: 1000, range: 100-60000)', '1000')
+    .option('-v, --verbose', 'Show detailed output for each test')
     .option('-q, --quiet', 'Suppress all output except errors')
     .option('-o, --output <path>', 'Write results to file')
-    .option('-f, --format <format>', 'Output format: json, tap, junit, pretty', 'pretty')
+    .option('-f, --format <format>', 'Output format: json, tap, junit, pretty (default: pretty)', 'pretty')
     .option('--upload', 'Upload results to ReleaseGate cloud')
     .option('--no-thresholds', 'Skip threshold checks (always exit 0)')
     .option('--dry-run', 'Load config and show what would run without executing')
+    .addHelpText('after', `
+Examples:
+  $ releasegate run                           Run all test suites
+  $ releasegate run --suite accuracy safety   Run specific suites only
+  $ releasegate run --verbose                 Show detailed test output
+  $ releasegate run --dry-run                 Preview without executing
+  $ releasegate run -o results.json -f json   Output results to JSON file
+  $ releasegate run --timeout 120000          Increase timeout to 2 minutes
+  $ releasegate run --upload                  Upload results to dashboard
+
+Exit codes:
+  0  All tests passed and thresholds met
+  1  Tests failed or thresholds not met
+`)
     .action(async (options: RunOptions) => {
       await runCommand(options);
     });
@@ -317,6 +376,9 @@ async function runCommand(options: RunOptions): Promise<void> {
   );
 
   try {
+    // Validate CLI options first
+    const validatedOpts = validateOptions(options);
+
     // Load configuration
     reporter.log('Loading configuration...');
     const { config, configPath, warnings } = loadConfig({
@@ -366,15 +428,16 @@ async function runCommand(options: RunOptions): Promise<void> {
       return;
     }
 
-    // Execute tests
-    reporter.log(`\nRunning ${config.suites.reduce((sum, s) => sum + s.cases.length, 0)} tests across ${config.suites.length} suite(s)...\n`);
+    // Calculate total tests for progress display
+    const totalTests = config.suites.reduce((sum, s) => sum + s.cases.length, 0);
+    reporter.log(`\nRunning ${totalTests} tests across ${config.suites.length} suite(s)...\n`);
 
     const startedAt = new Date();
     const result = await execute(config, {
-      concurrency: parseInt(options.concurrency || '5', 10),
-      timeoutMs: parseInt(options.timeout || '60000', 10),
-      maxRetries: parseInt(options.retries || '3', 10),
-      retryDelayMs: parseInt(options.retryDelay || '1000', 10),
+      concurrency: validatedOpts.concurrency,
+      timeoutMs: validatedOpts.timeout,
+      maxRetries: validatedOpts.retries,
+      retryDelayMs: validatedOpts.retryDelay,
       verbose: options.verbose,
       onProgress: (event) => reporter.onProgress(event),
     });
@@ -403,6 +466,19 @@ async function runCommand(options: RunOptions): Promise<void> {
     if (!options.quiet) {
       const consoleReporter = new ConsoleReporter();
       console.log(consoleReporter.format(result));
+    }
+
+    // Show threshold violations in detail if any
+    if (!result.thresholdsResult.passed && !options.quiet) {
+      console.log(`\n${colorize('Threshold violations:', 'red')}`);
+      for (const check of result.thresholdsResult.checks) {
+        if (!check.passed) {
+          const actualPct = (check.actual * 100).toFixed(1);
+          const thresholdPct = (check.threshold * 100).toFixed(1);
+          console.log(colorize(`  ✗ ${check.name}: ${actualPct}% (required: ${thresholdPct}%)`, 'red'));
+        }
+      }
+      console.log('');
     }
 
     // Upload if requested

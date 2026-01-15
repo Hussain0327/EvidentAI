@@ -11,7 +11,18 @@ export function createAnthropicProvider(
 ): LLMProvider {
   const apiKey = config.api_key || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    throw new Error('Anthropic API key not found. Set ANTHROPIC_API_KEY or provide api_key in config.');
+    throw new Error(
+      `Anthropic API key not found.
+
+Set the environment variable:
+  export ANTHROPIC_API_KEY=your-key-here
+
+Or add to your config file:
+  provider:
+    api_key: your-key-here
+
+Get a key at: https://console.anthropic.com/settings/keys`
+    );
   }
 
   return {
