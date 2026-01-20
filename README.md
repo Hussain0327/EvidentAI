@@ -162,19 +162,49 @@ jobs:
 
 ---
 
+## Runtime Protection
+
+For production environments, use **@evidentai/gateway** - a secure proxy that sits between your application and LLM providers.
+
+```bash
+# Install
+npm install @evidentai/gateway
+
+# Start gateway
+npx evidentai-gateway --port 3000
+
+# Use with OpenAI SDK (just change baseURL)
+const openai = new OpenAI({
+  baseURL: 'http://localhost:3000/v1',
+  apiKey: process.env.OPENAI_API_KEY
+});
+```
+
+**Features:**
+- Prompt injection detection (20+ patterns)
+- PII detection and redaction (email, phone, SSN, credit card, etc.)
+- Multi-provider routing (OpenAI, Anthropic, Azure)
+- Request/response logging for compliance
+
+See [packages/gateway/README.md](./packages/gateway/README.md) for full documentation.
+
+---
+
 ## Project Structure
 
 ```
 EvidentAI/
 ├── packages/
-│   └── cli/                 # @evidentai/cli (npm package)
-│       ├── src/
-│       │   ├── commands/    # CLI commands
-│       │   ├── config/      # YAML + Zod validation
-│       │   └── runner/
-│       │       ├── evaluators/  # 6 built-in evaluators
-│       │       └── providers/   # OpenAI, Anthropic, Azure
-│       └── bin/
+│   ├── cli/                 # @evidentai/cli (npm package)
+│   │   ├── src/
+│   │   │   ├── commands/    # CLI commands
+│   │   │   ├── config/      # YAML + Zod validation
+│   │   │   └── runner/
+│   │   │       ├── evaluators/  # 6 built-in evaluators
+│   │   │       └── providers/   # OpenAI, Anthropic, Azure
+│   │   └── bin/
+│   ├── gateway/             # @evidentai/gateway (LLM security proxy)
+│   └── shield/              # @evidentai/shield (runtime middleware)
 │
 ├── apps/
 │   ├── api/                 # FastAPI backend (coming soon)
@@ -201,6 +231,7 @@ EvidentAI/
 | Component | Status |
 |-----------|--------|
 | **CLI** | ✅ Complete - 159 tests passing |
+| **Gateway** | ✅ Complete - 52 tests passing |
 | **Real LLM Testing** | ✅ Verified with OpenAI |
 | **npm Package** | ✅ Ready to publish |
 | **Dashboard** | 🔜 Coming soon |
